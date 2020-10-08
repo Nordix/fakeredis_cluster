@@ -257,8 +257,8 @@ create_node(Port) ->
 %% Create a #slots_map{} from node (master only) or nodes (master + replicas)
 create_slots_maps([{Id, _Node} | Replicas] = Nodes) when is_list(Nodes)->
     ReplicaIds = [ReplicaNode#node.id || {_ReplicaId, ReplicaNode} <- Replicas],
-    #slots_map{master_id = Id,
-               slave_ids = ReplicaIds};
+    #slots_map{master_id   = Id,
+               replica_ids = ReplicaIds};
 create_slots_maps({Id, _Node}) ->
     #slots_map{master_id = Id}.
 
@@ -284,16 +284,16 @@ create_cluster_slots_resp(State) ->
       SlotsMap#slots_map.end_slot,
       get_cluster_nodes(SlotsMap,
                         State#state.nodes,
-                        SlotsMap#slots_map.slave_ids)] || SlotsMap <- State#state.slots_maps].
+                        SlotsMap#slots_map.replica_ids)] || SlotsMap <- State#state.slots_maps].
 
 get_cluster_nodes(SlotsMap, Nodes, undefined) ->
     Master = maps:get(SlotsMap#slots_map.master_id, Nodes),
     [Master#node.address,
      Master#node.port,
      Master#node.id];
-get_cluster_nodes(SlotsMap, Nodes, SlaveIds) ->
+get_cluster_nodes(SlotsMap, Nodes, ReplicaIds) ->
     Master = maps:get(SlotsMap#slots_map.master_id, Nodes),
-    Replicas = [maps:get(NodeId, Nodes) || NodeId <- SlaveIds],
+    Replicas = [maps:get(NodeId, Nodes) || NodeId <- ReplicaIds],
     [[Node#node.address,
       Node#node.port,
       Node#node.id] || Node <- [Master] ++ Replicas].
@@ -308,21 +308,21 @@ lookup_slot(Slot, #state{slots_maps = SlotsMaps,
                         Slot =< End],
     maps:get(Id, Nodes).
 
-%% Shifts the master and slave ids so that each slot range will have
-%% the master and slaves of the next range in a list of #slots_maps{}.
+%% Shifts the master and replica ids so that each slot range will have
+%% the master and replicas of the next range in a list of #slots_maps{}.
 move_all_slots(SlotsMaps) ->
     move_all_slots(SlotsMaps, hd(SlotsMaps)).
 
-move_all_slots([This | [#slots_map{master_id = NextMasterId,
-                                   slave_ids = NextSlaveIds} | _] = Rest],
+move_all_slots([This | [#slots_map{master_id   = NextMasterId,
+                                   replica_ids = NextReplicaIds} | _] = Rest],
                First) ->
-    [This#slots_map{master_id = NextMasterId,
-                    slave_ids = NextSlaveIds}
+    [This#slots_map{master_id   = NextMasterId,
+                    replica_ids = NextReplicaIds}
     | move_all_slots(Rest, First)];
-move_all_slots([Last], #slots_map{master_id = FirstMasterId,
-                                  slave_ids = FirstSlaveIds}) ->
+move_all_slots([Last], #slots_map{master_id   = FirstMasterId,
+                                  replica_ids = FirstReplicaIds}) ->
     [Last#slots_map{master_id = FirstMasterId,
-                    slave_ids = FirstSlaveIds}].
+                    replica_ids = FirstReplicaIds}].
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
@@ -332,25 +332,25 @@ move_all_slots_test() ->
        [#slots_map{start_slot = 0,
                    end_slot = 1000,
                    master_id = <<2>>,
-                   slave_ids = [<<201>>, <<202>>]},
+                   replica_ids = [<<201>>, <<202>>]},
         #slots_map{start_slot = 1001,
                    end_slot = 2000,
                    master_id = <<3>>,
-                   slave_ids = undefined},
+                   replica_ids = undefined},
         #slots_map{start_slot = 2001,
                    end_slot = 16383,
                    master_id = <<1>>,
-                   slave_ids = undefined}],
+                   replica_ids = undefined}],
        move_all_slots([#slots_map{start_slot = 0,
                                   end_slot = 1000,
                                   master_id = <<1>>,
-                                  slave_ids = undefined},
+                                  replica_ids = undefined},
                        #slots_map{start_slot = 1001,
                                   end_slot = 2000,
                                   master_id = <<2>>,
-                                  slave_ids = [<<201>>, <<202>>]},
+                                  replica_ids = [<<201>>, <<202>>]},
                        #slots_map{start_slot = 2001,
                                   end_slot = 16383,
                                   master_id = <<3>>,
-                                  slave_ids = undefined}])).
+                                  replica_ids = undefined}])).
 -endif.
