@@ -6,8 +6,9 @@
 -export([start_link/1, start_link/2, start_link/3]).
 -export([main/1]). %% escript
 
--export([ start_instance/1
-        , kill_instance/1
+-export([ stop_node/1
+        , restart_node/1
+        , kill_node/1
         , get_redirect_by_key/1
         , get_node_by_slot/1
         , move_all_slots/0
@@ -24,15 +25,14 @@
 -export([init/1, handle_cast/2, handle_info/2, handle_call/3, terminate/2, code_change/3]).
 
 -type event_log_entry() :: {ConnectionId :: binary(),
-                            EventType    :: connect | command | reply,
+                            EventType    :: connect | command | reply | disconnect,
                             Data         :: any()}.
 
 -record(state, { max_clients   = 0   :: non_neg_integer()
                , options       = []  :: [tuple()]
-               , nodes         = #{} :: #{Id :: binary() | any() => #node{}}
+               , nodes         = #{} :: #{Id :: binary() => Node :: #node{}}
                , slots_maps    = []  :: [#slots_map{}]
-               , ask_redirects = #{} :: #{Key :: binary() => {Host :: binary(),
-                                                              Port :: inet:port_number()}}
+               , ask_redirects = #{} :: #{Key :: binary() => Id :: binary()}
                , event_log = []      :: [event_log_entry()]
                }).
 
@@ -49,11 +49,17 @@ start_link(Ports, Options) ->
 start_link(Ports, Options, MaxClients) ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, [Ports, Options, MaxClients], []).
 
-start_instance(Port) ->
-    gen_server:call(?MODULE, {start_instance, Port}).
+%% @doc Gracefully stop a fake Redis node
+stop_node(Port) ->
+    gen_server:call(?MODULE, {stop_node, Port}).
 
-kill_instance(Port) ->
-    gen_server:call(?MODULE, {kill_instance, Port}).
+%% @doc Restart a fake Redis node
+restart_node(Port) ->
+    gen_server:call(?MODULE, {restart_node, Port}).
+
+%% @doc Kill a fake Redis node
+kill_node(Port) ->
+    gen_server:call(?MODULE, {kill_node, Port}).
 
 %% @doc Returns the node which serves a particular key. If there is an
 %% ASK redirect for the key, it is returned. Otherwise a MOVED
@@ -146,15 +152,21 @@ handle_cast(_, State) ->
 handle_call(cluster_slots, _From, State) ->
     ?LOG("Handling a CLUSTER SLOTS request"),
     {reply, {ok, create_cluster_slots_resp(State)}, State};
-handle_call({start_instance, Port}, _From, #state{max_clients = MaxClients} = State) ->
-    ?LOG("start_instance: ~p", [Port]),
-    fakeredis_instance_sup:start_acceptors(Port, MaxClients),
+handle_call({restart_node, Port}, _From,
+            #state{max_clients = MaxClients, options = Options} = State) ->
+    fakeredis_instance_sup:start_link(Port, Options, MaxClients),
     {reply, ok, State};
-handle_call({kill_instance, Port}, _From, State) ->
-    ?LOG("kill_instance: ~p", [Port]),
-    Pids = gproc:lookup_pids({p, l, {local, Port}}),
-    ?LOG("Stop port=~p, pids=~p", [Port, Pids]),
-    [exit(Pid, kill) || Pid <- Pids],
+handle_call({stop_node, Port}, _From, State) ->
+    [exit(Pid, normal) ||
+        Pid <- gproc:lookup_pids({n, l, {fakeredis_instance_sup, Port}})],
+    {reply, ok, State};
+handle_call({kill_node, Port}, _From, State) ->
+    %% Kill all connections..
+    [exit(Pid, kill) ||
+        Pid <- gproc:lookup_pids({p, l, {local, Port}})],
+    %% ..and stop the supervisor nicely to avoid termination
+    [exit(Pid, normal) ||
+        Pid <- gproc:lookup_pids({n, l, {fakeredis_instance_sup, Port}})],
     {reply, ok, State};
 handle_call({get_redirect_by_key, Key}, _From, State) ->
     Slot = fakeredis_hash:hash(Key),
