@@ -181,9 +181,15 @@ handle_request([<<"ASKING">>], State) ->
     %% The client_asking flag is handled by handle_data/2.
     encode_and_send(ok, State);
 
+handle_request([<<"EVALSHA">> | _Tail], State) ->
+    %% No script handling yet in fakeredis_cluster
+    %% Reply like Redis when there is no script available
+    encode_and_send({error, <<"NOSCRIPT No matching script. Please use EVAL.">>},
+                    State);
+
 handle_request([Cmd | _Tail], State) ->
-    encode_and_send({error, <<"Unknown command ", Cmd/binary,
-                              " (but this is fakeredis...)">>},
+    encode_and_send({error, <<"ERR unknown command `", Cmd/binary,
+                              "` (but this is fakeredis...)">>},
                     State).
 
 %% Checks if a key is redirected to another node. Returns an error
