@@ -14,6 +14,7 @@
         , t_start_masters_with_2_replicas/1
         , t_moved_redirect/1
         , t_ask_redirect/1
+        , t_script_handling/1
         ]).
 
 -include_lib("common_test/include/ct.hrl").
@@ -43,7 +44,7 @@ t_cluster_slots(Config) when is_list(Config) ->
     %% Setup cluster and request CLUSTER SLOTS
     fakeredis_cluster:start_link([30001, 30002, 30003, 30004, 30005, 30006]),
     {ok, Sock} = gen_tcp:connect("localhost", 30001,
-                                 [binary, {active , false}, {packet, 0}]),
+                                 [binary, {active, false}, {packet, 0}]),
 
     Data = ["*2", ?NL, "$7", ?NL, "cluster", ?NL, "$5", ?NL, "slots", ?NL],
     ok = gen_tcp:send(Sock, Data),
@@ -57,7 +58,7 @@ t_cluster_slots(Config) when is_list(Config) ->
     %% Restart instance
     fakeredis_cluster:start_instance(30001),
     {ok, Sock2} = gen_tcp:connect("localhost", 30001,
-                                 [binary, {active , false}, {packet, 0}]),
+                                 [binary, {active, false}, {packet, 0}]),
     ok = gen_tcp:send(Sock2, Data),
     {ok, _Data} = gen_tcp:recv(Sock2, 0),
     ok = gen_tcp:close(Sock2),
@@ -79,7 +80,7 @@ t_cluster_slots(Config) when is_list(Config) ->
 t_start_masters_only(Config) when is_list(Config) ->
     fakeredis_cluster:start_link([20010, 20020, 20030]),
     {ok, Sock} = gen_tcp:connect("localhost", 20010,
-                                 [binary, {active , false}, {packet, 0}]),
+                                 [binary, {active, false}, {packet, 0}]),
 
     Data = ["*2", ?NL, "$7", ?NL, "cluster", ?NL, "$5", ?NL, "slots", ?NL],
     ok = gen_tcp:send(Sock, Data),
@@ -92,7 +93,7 @@ t_start_masters_with_single_replica(Config) when is_list(Config) ->
                                   {20030, 20031}]),
 
     {ok, Sock} = gen_tcp:connect("localhost", 20010,
-                                 [binary, {active , false}, {packet, 0}]),
+                                 [binary, {active, false}, {packet, 0}]),
 
     Data = ["*2", ?NL, "$7", ?NL, "cluster", ?NL, "$5", ?NL, "slots", ?NL],
     ok = gen_tcp:send(Sock, Data),
@@ -105,7 +106,7 @@ t_start_masters_with_2_replicas(Config) when is_list(Config) ->
                                   {20030, 20031, 20031}]),
 
     {ok, Sock} = gen_tcp:connect("localhost", 20010,
-                                 [binary, {active , false}, {packet, 0}]),
+                                 [binary, {active, false}, {packet, 0}]),
 
     Data = ["*2", ?NL, "$7", ?NL, "cluster", ?NL, "$5", ?NL, "slots", ?NL],
     ok = gen_tcp:send(Sock, Data),
@@ -212,7 +213,7 @@ t_ask_redirect(Config) when is_list(Config) ->
     ?assertEqual({ok, <<"$3\r\nbar\r\n">>},
                  gen_tcp:recv(DifferentSock, 0)),
 
-    %% Delete the directect and check that fakeredis_cluster directs
+    %% Delete the redirect and check that fakeredis_cluster directs
     %% the key back to the original node for the slot.
     fakeredis_cluster:delete_ask_redirect(Key),
     ?assertEqual({moved, Slot, Addr, SlotPort},
@@ -220,3 +221,26 @@ t_ask_redirect(Config) when is_list(Config) ->
 
     ok = gen_tcp:close(SlotSock),
     ok = gen_tcp:close(DifferentSock).
+
+t_script_handling(Config) when is_list(Config) ->
+    ClusterPorts = [30000],
+    fakeredis_cluster:start_link(ClusterPorts),
+
+    {ok, Sock} = gen_tcp:connect("localhost", 30000,
+                                 [binary, {active, false}, {packet, 0}]),
+
+    %% Verify that `evalsha` is handled
+    EvalShaReq = fakeredis_encoder:encode([<<"EVALSHA">>,
+                                           <<"49149638cc11c5cd05b9cfdb92c8d5293becfdda">>,
+                                           <<"1">>, <<"key">>, <<"val">>]),
+    ok = gen_tcp:send(Sock, EvalShaReq),
+    {ok, EvalShaResp} = gen_tcp:recv(Sock, 0),
+    ?assertMatch(<<"-NOSCRIPT ", _/binary>>, EvalShaResp),
+
+    %% Verify that `script` is not yet handled
+    ScriptLoadReq = fakeredis_encoder:encode([<<"SCRIPT">>, <<"LOAD">>]),
+    ok = gen_tcp:send(Sock, ScriptLoadReq),
+    {ok, ScriptLoadResp} = gen_tcp:recv(Sock, 0),
+    ?assertMatch(<<"-ERR unknown", _/binary>>, ScriptLoadResp),
+
+    ok = gen_tcp:close(Sock).
