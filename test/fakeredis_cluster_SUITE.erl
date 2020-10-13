@@ -50,18 +50,34 @@ t_cluster_slots(Config) when is_list(Config) ->
     ok = gen_tcp:send(Sock, Data),
     {ok, _Data} = gen_tcp:recv(Sock, 0),
 
-    %% Kill FakeRedis instance
-    fakeredis_cluster:kill_instance(30001),
+    %% Kill a fake Redis node
+    fakeredis_cluster:kill_node(30001),
     ?assertMatch(ok, gen_tcp:send(Sock, Data)),
     ?assertMatch({error, closed}, gen_tcp:recv(Sock, 0)),
 
-    %% Restart instance
-    fakeredis_cluster:start_instance(30001),
+    %% Need to wait some time after kill_node/1 to be able
+    %% to restart node and setup new server socket
+    timer:sleep(100),
+
+    %% Restart the node again
+    fakeredis_cluster:restart_node(30001),
     {ok, Sock2} = gen_tcp:connect("localhost", 30001,
                                  [binary, {active, false}, {packet, 0}]),
     ok = gen_tcp:send(Sock2, Data),
     {ok, _Data} = gen_tcp:recv(Sock2, 0),
-    ok = gen_tcp:close(Sock2),
+
+    %% Stop a fake Redis node
+    fakeredis_cluster:stop_node(30001),
+    ?assertMatch(ok, gen_tcp:send(Sock2, Data)),
+    ?assertMatch({error, closed}, gen_tcp:recv(Sock2, 0)),
+
+    %% Restart the node again
+    fakeredis_cluster:restart_node(30001),
+    {ok, Sock3} = gen_tcp:connect("localhost", 30001,
+                                 [binary, {active , false}, {packet, 0}]),
+    ok = gen_tcp:send(Sock3, Data),
+    {ok, _Data} = gen_tcp:recv(Sock3, 0),
+    ok = gen_tcp:close(Sock3),
 
     %% Check event log, mostly to check that the event log functionality works.
     timer:sleep(100),
@@ -71,7 +87,10 @@ t_cluster_slots(Config) when is_list(Config) ->
                   {Connection2, connect, _},
                   {Connection2, command, [<<"cluster">>, <<"slots">>]},
                   {Connection2, reply, _},
-                  {Connection2, disconnect, normal}
+                  {Connection3, connect, _},
+                  {Connection3, command, [<<"cluster">>, <<"slots">>]},
+                  {Connection3, reply, _},
+                  {Connection3, disconnect, normal}
                  ],
                  fakeredis_cluster:get_event_log()),
     ok = fakeredis_cluster:clear_event_log(),

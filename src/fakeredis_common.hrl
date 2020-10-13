@@ -34,5 +34,5 @@
 -record(slots_map, { start_slot = 0 :: integer()
                    , end_slot   = 0 :: integer()
                    , master_id      :: binary()
-                   , slave_ids      :: [binary()] | undefined
+                   , replica_ids    :: [binary()] | undefined
                    }).
