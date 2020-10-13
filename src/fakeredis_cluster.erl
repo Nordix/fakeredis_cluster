@@ -9,6 +9,7 @@
 -export([ stop_node/1
         , restart_node/1
         , kill_node/1
+        , kill_node_on_command/2
         , get_redirect_by_key/1
         , get_node_by_slot/1
         , move_all_slots/0
@@ -33,7 +34,7 @@
                , nodes         = #{} :: #{Id :: binary() => Node :: #node{}}
                , slots_maps    = []  :: [#slots_map{}]
                , ask_redirects = #{} :: #{Key :: binary() => Id :: binary()}
-               , event_log = []      :: [event_log_entry()]
+               , event_log     = []  :: [event_log_entry()]
                }).
 
 -define(DEFAULT_MAX_CLIENTS, 10).
@@ -50,16 +51,28 @@ start_link(Ports, Options, MaxClients) ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, [Ports, Options, MaxClients], []).
 
 %% @doc Gracefully stop a fake Redis node
+-spec stop_node(Port :: inet:port_number()) -> ok.
 stop_node(Port) ->
     gen_server:call(?MODULE, {stop_node, Port}).
 
 %% @doc Restart a fake Redis node
+-spec restart_node(Port :: inet:port_number()) -> ok.
 restart_node(Port) ->
     gen_server:call(?MODULE, {restart_node, Port}).
 
 %% @doc Kill a fake Redis node
+-spec kill_node(Port :: inet:port_number()) -> ok.
 kill_node(Port) ->
     gen_server:call(?MODULE, {kill_node, Port}).
+
+%% @doc Kill a fake Redis node when a specific command is received
+%% from a client. The matching is performed on the initial command
+%% word in the received request and is case sensitive.
+%% @end
+-spec kill_node_on_command(Port :: inet:port_number(),
+                           Command :: binary()) -> ok.
+kill_node_on_command(Port, Command) ->
+    gen_server:call(?MODULE, {kill_node_on_command, Port, Command}).
 
 %% @doc Returns the node which serves a particular key. If there is an
 %% ASK redirect for the key, it is returned. Otherwise a MOVED
@@ -167,6 +180,10 @@ handle_call({kill_node, Port}, _From, State) ->
     %% ..and stop the supervisor nicely to avoid termination
     [exit(Pid, normal) ||
         Pid <- gproc:lookup_pids({n, l, {fakeredis_instance_sup, Port}})],
+    {reply, ok, State};
+handle_call({kill_node_on_command, Port, Command}, _From, State) ->
+    [gen_server:cast(Pid, {set_kill_node_on_command, Command}) ||
+        Pid <- gproc:lookup_pids({p, l, {local, Port}})],
     {reply, ok, State};
 handle_call({get_redirect_by_key, Key}, _From, State) ->
     Slot = fakeredis_hash:hash(Key),

@@ -23,7 +23,11 @@
                  parser_state,
 
                  %% true if the previous command was ASKING
-                 client_asking = false :: boolean()
+                 client_asking = false :: boolean(),
+
+                 %% A command word, that if matching the first command in a
+                 %% incoming requests, will trigger a simulated Redis node kill.
+                 kill_node_on_command :: undefined | binary()
                }).
 
 start_link(ListenSocket, Options) ->
@@ -68,6 +72,8 @@ init([ListenSocket, Options]) ->
                                               parser_state = fakeredis_parser:init()
                                              }).
 
+handle_cast({set_kill_node_on_command, Command}, State) ->
+    {noreply, State#state{kill_node_on_command = Command}};
 handle_cast(_, State) ->
     {noreply, State}.
 
@@ -128,9 +134,12 @@ parse_data(Data, #state{parser_state = ParserState} = State) ->
             State
     end.
 
-%% Make sure first command is in upper
 -spec handle_data(Command :: list(), #state{}) -> #state{}.
+handle_data([Cmd | _], #state{kill_node_on_command = Cmd,
+                              local_port = Port}) ->
+    gen_server:call(fakeredis_cluster, {kill_node, Port});
 handle_data([Cmd | Args] = Data, State) ->
+    %% Make sure first command is in upper
     CmdUpper = string:uppercase(Cmd),
     command_delay(CmdUpper, State),
     fakeredis_cluster:log_event(command, Data),
