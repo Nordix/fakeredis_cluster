@@ -15,6 +15,7 @@
         , t_moved_redirect/1
         , t_ask_redirect/1
         , t_script_handling/1
+        , t_kill_node_on_command/1
         ]).
 
 -include_lib("common_test/include/ct.hrl").
@@ -36,7 +37,7 @@ all() -> [F || {F, _A} <- module_info(exports),
                    _         -> false
                end].
 
-suite() -> [{timetrap, {minutes, 5}}].
+suite() -> [{timetrap, {seconds, 5}}].
 
 %% Test
 
@@ -263,3 +264,21 @@ t_script_handling(Config) when is_list(Config) ->
     ?assertMatch(<<"-ERR unknown", _/binary>>, ScriptLoadResp),
 
     ok = gen_tcp:close(Sock).
+
+t_kill_node_on_command(Config) when is_list(Config) ->
+    Port = 30000,
+    fakeredis_cluster:start_link([Port]),
+
+    {ok, Sock} = gen_tcp:connect("localhost", Port,
+                                 [binary, {active, false}, {packet, 0}]),
+
+    %% Kill node after a <<"GET">> command was received
+    fakeredis_cluster:kill_node_on_command(Port, <<"GET">>),
+
+    SetReq = fakeredis_encoder:encode([<<"SET">>, <<"foo">>, <<"bar">>]),
+    ok = gen_tcp:send(Sock, SetReq),
+    {ok, _} = gen_tcp:recv(Sock, 0),
+
+    GetReq = fakeredis_encoder:encode([<<"GET">>, <<"foo">>]),
+    ok = gen_tcp:send(Sock, GetReq),
+    {error, closed} = gen_tcp:recv(Sock, 0).
